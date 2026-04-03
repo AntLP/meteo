@@ -2,9 +2,6 @@
 .Rproj.user/
 .Rhistory
 *.Rproj
-renv/library/
-renv/staging/
-
 # Data (large — do not commit)
 data/*.csv
 

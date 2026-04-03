@@ -1,1 +1,1 @@
-source("renv/activate.R")
+# renv disabled — packages are managed via a local library or system-wide installation
