@@ -68,3 +68,42 @@ build_tooltip_html <- function(station_name, summary) {
 
   paste(c(header, lines), collapse = "<br>")
 }
+
+# Scan data_dir, read first row of each station's most recent CSV,
+# return data frame: climate_id, station_name, lon, lat
+build_station_registry <- function(data_dir = "data") {
+  files <- list.files(
+    data_dir,
+    pattern   = "^climate_daily_QC_.+_\\d{4}_P1D\\.csv$",
+    full.names = TRUE
+  )
+
+  if (length(files) == 0) return(NULL)
+
+  file_info <- data.frame(
+    path       = files,
+    climate_id = sub(".*climate_daily_QC_(.+)_\\d{4}_P1D\\.csv$", "\\1", basename(files)),
+    year       = as.integer(sub(".*climate_daily_QC_.+_(\\d{4})_P1D\\.csv$", "\\1", basename(files))),
+    stringsAsFactors = FALSE
+  )
+
+  most_recent <- file_info |>
+    group_by(climate_id) |>
+    slice_max(year, n = 1, with_ties = FALSE) |>
+    ungroup()
+
+  rows <- lapply(seq_len(nrow(most_recent)), function(i) {
+    tryCatch({
+      d <- read_csv(most_recent$path[i], n_max = 1, show_col_types = FALSE)
+      data.frame(
+        climate_id   = most_recent$climate_id[i],
+        station_name = d[["Station Name"]],
+        lon          = d[["Longitude (x)"]],
+        lat          = d[["Latitude (y)"]],
+        stringsAsFactors = FALSE
+      )
+    }, error = function(e) NULL)
+  })
+
+  do.call(rbind, Filter(Negate(is.null), rows))
+}
