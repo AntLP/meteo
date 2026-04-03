@@ -102,7 +102,11 @@ build_station_registry <- function(data_dir = "data") {
         lat          = d[["Latitude (y)"]],
         stringsAsFactors = FALSE
       )
-    }, error = function(e) NULL)
+    }, error = function(e) {
+      warning(sprintf("Impossible de lire le fichier %s : %s",
+                      most_recent$path[i], conditionMessage(e)))
+      NULL
+    })
   })
 
   do.call(rbind, Filter(Negate(is.null), rows))
