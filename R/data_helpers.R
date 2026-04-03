@@ -25,31 +25,66 @@ METRIC_COLS <- DISPLAY_COLS[DISPLAY_COLS != "Date/Time"]
 
 # English → French label mapping for table headers and chart y-axis
 FRENCH_COLS <- c(
-  "Date/Time"                  = "Date",
-  "Max Temp (C)"               = "Temp. max. (°C)",
-  "Min Temp (C)"               = "Temp. min. (°C)",
-  "Mean Temp (C)"              = "Temp. moy. (°C)",
-  "Heat Deg Days (C)"          = "Degrés-jours de chauffe (°C)",
-  "Cool Deg Days (C)"          = "Degrés-jours de clim. (°C)",
-  "Total Rain (mm)"            = "Pluie totale (mm)",
-  "Total Snow (cm)"            = "Neige totale (cm)",
-  "Total Precip (mm)"          = "Précip. totales (mm)",
-  "Snow on Grnd (cm)"          = "Neige au sol (cm)",
-  "Dir of Max Gust (10s deg)"  = "Dir. rafale max. (diz. °)",
-  "Spd of Max Gust (km/h)"     = "Vitesse rafale max. (km/h)"
+  "Date/Time" = "Date",
+  "Max Temp (C)" = "Temp. max. (°C)",
+  "Min Temp (C)" = "Temp. min. (°C)",
+  "Mean Temp (C)" = "Temp. moy. (°C)",
+  "Heat Deg Days (C)" = "Degrés-jours de chauffe (°C)",
+  "Cool Deg Days (C)" = "Degrés-jours de clim. (°C)",
+  "Total Rain (mm)" = "Pluie totale (mm)",
+  "Total Snow (cm)" = "Neige totale (cm)",
+  "Total Precip (mm)" = "Précip. totales (mm)",
+  "Snow on Grnd (cm)" = "Neige au sol (cm)",
+  "Dir of Max Gust (10s deg)" = "Dir. rafale max. (diz. °)",
+  "Spd of Max Gust (km/h)" = "Vitesse rafale max. (km/h)"
 )
 
 # Subset shown in hover tooltip on the map.
 # Note: "Total Precip (mm)" uses a shorter French label here than in FRENCH_COLS
 # to keep tooltip compact.
 TOOLTIP_COLS <- c(
-  "Max Temp (C)"        = "Temp. max. (°C)",
-  "Min Temp (C)"        = "Temp. min. (°C)",
-  "Mean Temp (C)"       = "Temp. moy. (°C)",
-  "Total Precip (mm)"   = "Précip. (mm)",
-  "Snow on Grnd (cm)"   = "Neige au sol (cm)",
+  "Max Temp (C)" = "Temp. max. (°C)",
+  "Min Temp (C)" = "Temp. min. (°C)",
+  "Mean Temp (C)" = "Temp. moy. (°C)",
+  "Total Precip (mm)" = "Précip. (mm)",
+  "Snow on Grnd (cm)" = "Neige au sol (cm)",
   "Spd of Max Gust (km/h)" = "Rafale max. (km/h)"
 )
+
+COL_TYPES <- cols(
+  "Longitude (x)" = col_double(),
+  "Latitude (y)" = col_double(),
+  "Station Name" = col_character(),
+  "Climate ID" = col_character(),
+  "Date/Time" = col_date(),
+  "Year" = col_integer(),
+  "Month" = col_integer(),
+  "Day" = col_integer(),
+  "Data Quality" = col_character(),
+  "Max Temp (°C)" = col_double(),
+  "Max Temp Flag" = col_character(),
+  "Min Temp (°C)" = col_double(),
+  "Min Temp Flag" = col_character(),
+  "Mean Temp (°C)" = col_double(),
+  "Mean Temp Flag" = col_character(),
+  "Heat Deg Days (°C)" = col_double(),
+  "Heat Deg Days Flag" = col_character(),
+  "Cool Deg Days (°C)" = col_double(),
+  "Cool Deg Days Flag" = col_character(),
+  "Total Rain (mm)" = col_double(),
+  "Total Rain Flag" = col_character(),
+  "Total Snow (cm)" = col_double(),
+  "Total Snow Flag" = col_character(),
+  "Total Precip (mm)" = col_double(),
+  "Total Precip Flag" = col_character(),
+  "Snow on Grnd (cm)" = col_double(),
+  "Snow on Grnd Flag" = col_character(),
+  "Dir of Max Gust (10s deg)" = col_double(),
+  "Dir of Max Gust Flag" = col_character(),
+  "Spd of Max Gust (km/h)" = col_double(),
+  "Spd of Max Gust Flag" = col_character()
+)
+
 
 # Build HTML string for Leaflet hover tooltip
 # summary: named numeric vector from get_yesterday_summary(), names are English col names
@@ -62,10 +97,14 @@ build_tooltip_html <- function(station_name, summary) {
 
   # Only show columns defined in TOOLTIP_COLS, in TOOLTIP_COLS order
   cols_to_show <- intersect(names(TOOLTIP_COLS), names(summary))
-  lines <- vapply(cols_to_show, function(col) {
-    label <- TOOLTIP_COLS[[col]]
-    sprintf("%s : %.1f", label, summary[[col]])
-  }, character(1))
+  lines <- vapply(
+    cols_to_show,
+    function(col) {
+      label <- TOOLTIP_COLS[[col]]
+      sprintf("%s : %.1f", label, summary[[col]])
+    },
+    character(1)
+  )
 
   paste(c(header, lines), collapse = "<br>")
 }
@@ -75,16 +114,26 @@ build_tooltip_html <- function(station_name, summary) {
 build_station_registry <- function(data_dir = "data") {
   files <- list.files(
     data_dir,
-    pattern   = "^climate_daily_QC_.+_\\d{4}_P1D\\.csv$",
+    pattern = "^climate_daily_QC_.+_\\d{4}_P1D\\.csv$",
     full.names = TRUE
   )
 
-  if (length(files) == 0) return(NULL)
+  if (length(files) == 0) {
+    return(NULL)
+  }
 
   file_info <- data.frame(
-    path       = files,
-    climate_id = sub(".*climate_daily_QC_(.+)_\\d{4}_P1D\\.csv$", "\\1", basename(files)),
-    year       = as.integer(sub(".*climate_daily_QC_.+_(\\d{4})_P1D\\.csv$", "\\1", basename(files))),
+    path = files,
+    climate_id = sub(
+      ".*climate_daily_QC_(.+)_\\d{4}_P1D\\.csv$",
+      "\\1",
+      basename(files)
+    ),
+    year = as.integer(sub(
+      ".*climate_daily_QC_.+_(\\d{4})_P1D\\.csv$",
+      "\\1",
+      basename(files)
+    )),
     stringsAsFactors = FALSE
   )
 
@@ -94,20 +143,26 @@ build_station_registry <- function(data_dir = "data") {
     ungroup()
 
   rows <- lapply(seq_len(nrow(most_recent)), function(i) {
-    tryCatch({
-      d <- read_csv(most_recent$path[i], n_max = 1, show_col_types = FALSE)
-      data.frame(
-        climate_id   = most_recent$climate_id[i],
-        station_name = d[["Station Name"]],
-        lon          = d[["Longitude (x)"]],
-        lat          = d[["Latitude (y)"]],
-        stringsAsFactors = FALSE
-      )
-    }, error = function(e) {
-      warning(sprintf("Impossible de lire le fichier %s : %s",
-                      most_recent$path[i], conditionMessage(e)))
-      NULL
-    })
+    tryCatch(
+      {
+        d <- read_csv(most_recent$path[i], n_max = 1, show_col_types = FALSE)
+        data.frame(
+          climate_id = most_recent$climate_id[i],
+          station_name = d[["Station Name"]],
+          lon = d[["Longitude (x)"]],
+          lat = d[["Latitude (y)"]],
+          stringsAsFactors = FALSE
+        )
+      },
+      error = function(e) {
+        warning(sprintf(
+          "Impossible de lire le fichier %s : %s",
+          most_recent$path[i],
+          conditionMessage(e)
+        ))
+        NULL
+      }
+    )
   })
 
   do.call(rbind, Filter(Negate(is.null), rows))
@@ -115,27 +170,41 @@ build_station_registry <- function(data_dir = "data") {
 
 # Return a named numeric vector of non-NA TOOLTIP_COLS values for yesterday.
 # ref_date is injectable for testing (defaults to today).
-get_yesterday_summary <- function(climate_id, data_dir = "data", ref_date = Sys.Date()) {
+get_yesterday_summary <- function(
+  climate_id,
+  data_dir = "data",
+  ref_date = Sys.Date()
+) {
   yesterday <- as.character(ref_date - 1)
-  year      <- format(ref_date - 1, "%Y")
+  year <- format(ref_date - 1, "%Y")
 
   pattern <- sprintf("^climate_daily_QC_%s_%s_P1D\\.csv$", climate_id, year)
-  files   <- list.files(data_dir, pattern = pattern, full.names = TRUE)
+  files <- list.files(data_dir, pattern = pattern, full.names = TRUE)
 
-  if (length(files) == 0) return(NULL)
+  if (length(files) == 0) {
+    return(NULL)
+  }
 
-  d   <- read_csv(files[[1]], show_col_types = FALSE)
+  d <- read_csv(files[[1]], show_col_types = FALSE)
   row <- d[d[["Date/Time"]] == yesterday, ]
 
-  if (nrow(row) == 0) return(NULL)
+  if (nrow(row) == 0) {
+    return(NULL)
+  }
 
-  vals <- vapply(names(TOOLTIP_COLS), function(col) {
-    v <- row[[col]]
-    if (length(v) == 0 || is.na(v)) NA_real_ else as.numeric(v)
-  }, numeric(1))
+  vals <- vapply(
+    names(TOOLTIP_COLS),
+    function(col) {
+      v <- row[[col]]
+      if (length(v) == 0 || is.na(v)) NA_real_ else as.numeric(v)
+    },
+    numeric(1)
+  )
 
   vals <- vals[!is.na(vals)]
-  if (length(vals) == 0) return(NULL)
+  if (length(vals) == 0) {
+    return(NULL)
+  }
   vals
 }
 
@@ -143,12 +212,22 @@ get_yesterday_summary <- function(climate_id, data_dir = "data", ref_date = Sys.
 # with Date/Time parsed as Date and rows sorted chronologically.
 load_station_data <- function(climate_id, data_dir = "data") {
   pattern <- sprintf("^climate_daily_QC_%s_\\d{4}_P1D\\.csv$", climate_id)
-  files   <- list.files(data_dir, pattern = pattern, full.names = TRUE)
+  files <- list.files(data_dir, pattern = pattern, full.names = TRUE)
 
-  if (length(files) == 0) return(NULL)
+  if (length(files) == 0) {
+    return(NULL)
+  }
 
   parts <- lapply(files, function(f) {
-    tryCatch(read_csv(f, show_col_types = FALSE), error = function(e) NULL)
+    tryCatch(
+      read_csv(
+        f,
+        show_col_types = FALSE,
+        col_types = COL_TYPES,
+        locale = locale(encoding = "latin1")
+      ),
+      error = function(e) NULL
+    )
   })
 
   d <- bind_rows(Filter(Negate(is.null), parts))
