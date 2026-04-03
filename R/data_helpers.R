@@ -2,6 +2,7 @@
 
 library(dplyr)
 library(readr)
+library(htmltools)
 
 # All columns shown in the station detail table (in display order)
 DISPLAY_COLS <- c(

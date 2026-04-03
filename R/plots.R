@@ -21,8 +21,7 @@ build_chart <- function(data, metric_col) {
       xaxis = list(title = "Date"),
       yaxis = list(title = y_label),
       hovermode = "x unified"
-    ) |>
-    plotly_build()
+    )
 }
 
 # DT datatable showing DISPLAY_COLS with French headers.
