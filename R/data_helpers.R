@@ -137,3 +137,20 @@ get_yesterday_summary <- function(climate_id, data_dir = "data", ref_date = Sys.
   if (length(vals) == 0) return(NULL)
   vals
 }
+
+# Read and bind all yearly CSVs for a climate_id. Returns a data frame
+# with Date/Time parsed as Date and rows sorted chronologically.
+load_station_data <- function(climate_id, data_dir = "data") {
+  pattern <- sprintf("^climate_daily_QC_%s_\\d{4}_P1D\\.csv$", climate_id)
+  files   <- list.files(data_dir, pattern = pattern, full.names = TRUE)
+
+  if (length(files) == 0) return(NULL)
+
+  parts <- lapply(files, function(f) {
+    tryCatch(read_csv(f, show_col_types = FALSE), error = function(e) NULL)
+  })
+
+  d <- bind_rows(Filter(Negate(is.null), parts))
+  d[["Date/Time"]] <- as.Date(d[["Date/Time"]])
+  arrange(d, `Date/Time`)
+}
