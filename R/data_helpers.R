@@ -19,8 +19,8 @@ DISPLAY_COLS <- c(
   "Spd of Max Gust (km/h)"
 )
 
-# Metric columns only (excludes Date)
-METRIC_COLS <- DISPLAY_COLS[-1]
+# Metric columns only (excludes Date/Time)
+METRIC_COLS <- DISPLAY_COLS[DISPLAY_COLS != "Date/Time"]
 
 # English → French label mapping for table headers and chart y-axis
 FRENCH_COLS <- c(
@@ -38,7 +38,9 @@ FRENCH_COLS <- c(
   "Spd of Max Gust (km/h)"     = "Vitesse rafale max. (km/h)"
 )
 
-# Subset shown in hover tooltip on the map
+# Subset shown in hover tooltip on the map.
+# Note: "Total Precip (mm)" uses a shorter French label here than in FRENCH_COLS
+# to keep tooltip compact.
 TOOLTIP_COLS <- c(
   "Max Temp (C)"        = "Temp. max. (°C)",
   "Min Temp (C)"        = "Temp. min. (°C)",
@@ -51,14 +53,16 @@ TOOLTIP_COLS <- c(
 # Build HTML string for Leaflet hover tooltip
 # summary: named numeric vector from get_yesterday_summary(), names are English col names
 build_tooltip_html <- function(station_name, summary) {
-  header <- sprintf("<b>%s</b>", station_name)
+  header <- sprintf("<b>%s</b>", htmltools::htmlEscape(station_name))
 
   if (is.null(summary) || length(summary) == 0) {
-    return(paste(header, "Données non disponibles", sep = "<br>"))
+    return(paste(header, "Donn\u00e9es non disponibles", sep = "<br>"))
   }
 
-  lines <- vapply(names(summary), function(col) {
-    label <- TOOLTIP_COLS[col]
+  # Only show columns defined in TOOLTIP_COLS, in TOOLTIP_COLS order
+  cols_to_show <- intersect(names(TOOLTIP_COLS), names(summary))
+  lines <- vapply(cols_to_show, function(col) {
+    label <- TOOLTIP_COLS[[col]]
     sprintf("%s : %.1f", label, summary[[col]])
   }, character(1))
 
