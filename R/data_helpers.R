@@ -111,3 +111,29 @@ build_station_registry <- function(data_dir = "data") {
 
   do.call(rbind, Filter(Negate(is.null), rows))
 }
+
+# Return a named numeric vector of non-NA TOOLTIP_COLS values for yesterday.
+# ref_date is injectable for testing (defaults to today).
+get_yesterday_summary <- function(climate_id, data_dir = "data", ref_date = Sys.Date()) {
+  yesterday <- as.character(ref_date - 1)
+  year      <- format(ref_date - 1, "%Y")
+
+  pattern <- sprintf("^climate_daily_QC_%s_%s_P1D\\.csv$", climate_id, year)
+  files   <- list.files(data_dir, pattern = pattern, full.names = TRUE)
+
+  if (length(files) == 0) return(NULL)
+
+  d   <- read_csv(files[[1]], show_col_types = FALSE)
+  row <- d[d[["Date/Time"]] == yesterday, ]
+
+  if (nrow(row) == 0) return(NULL)
+
+  vals <- vapply(names(TOOLTIP_COLS), function(col) {
+    v <- row[[col]]
+    if (length(v) == 0 || is.na(v)) NA_real_ else as.numeric(v)
+  }, numeric(1))
+
+  vals <- vals[!is.na(vals)]
+  if (length(vals) == 0) return(NULL)
+  vals
+}
