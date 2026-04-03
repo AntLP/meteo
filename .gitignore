@@ -1,0 +1,13 @@
+# R
+.Rproj.user/
+.Rhistory
+*.Rproj
+renv/library/
+renv/staging/
+
+# Data (large — do not commit)
+data/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
