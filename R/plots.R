@@ -10,8 +10,8 @@ build_chart <- function(data, metric_col) {
 
   plot_ly(
     data = data,
-    x    = ~`Date/Time`,
-    y    = as.formula(paste0("~`", metric_col, "`")),
+    x    = ~date,
+    y    = as.formula(paste0("~", metric_col)),
     type = "scatter",
     mode = "lines",
     line = list(color = "#1565C0", width = 1.5),

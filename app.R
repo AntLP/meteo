@@ -3,15 +3,36 @@
 library(shiny)
 library(leaflet)
 library(leaflet.extras)
+library(leafem)
+library(terra)
+library(stars)
 library(plotly)
 library(DT)
 library(htmltools)
+library(DBI)
+library(duckdb)
 
 source("R/data_helpers.R")
 source("R/plots.R")
+source("R/raster_helpers.R")
+
+# ── Database connection ───────────────────────────────────────────────────────
+db_path <- "data/meteo.duckdb"
+con <- if (file.exists(db_path)) {
+  tryCatch(
+    DBI::dbConnect(duckdb::duckdb(), db_path, read_only = TRUE),
+    error = function(e) NULL
+  )
+} else {
+  NULL
+}
+
+shiny::onStop(function() {
+  if (!is.null(con)) DBI::dbDisconnect(con, shutdown = TRUE)
+})
 
 # ── Startup: build station registry ──────────────────────────────────────────
-station_registry <- build_station_registry()
+station_registry <- if (!is.null(con)) build_station_registry(con) else NULL
 data_available <- !is.null(station_registry) && nrow(station_registry) > 0
 
 if (data_available) {
@@ -23,7 +44,7 @@ if (data_available) {
   # Pre-compute yesterday's summaries for all stations (map tooltips)
   yesterday_summaries <- lapply(
     station_registry$climate_id,
-    function(cid) get_yesterday_summary(cid)
+    function(cid) get_yesterday_summary(con, cid)
   )
   names(yesterday_summaries) <- station_registry$climate_id
 
@@ -59,6 +80,56 @@ ui <- navbarPage(
       br(),
       DTOutput("table")
     )
+  ),
+
+  tabPanel(
+    "Carte raster",
+    fluidPage(
+      br(),
+      fluidRow(
+        column(
+          width = 3,
+          selectInput(
+            inputId  = "raster_metric",
+            label    = "Indicateur :",
+            choices  = setNames(METRIC_COLS, FRENCH_COLS[METRIC_COLS]),
+            selected = "mean_temp"
+          ),
+          radioButtons(
+            inputId  = "raster_date_mode",
+            label    = "Période :",
+            choices  = c("Date unique" = "single", "Intervalle" = "range"),
+            inline   = TRUE
+          ),
+          conditionalPanel(
+            condition = "input.raster_date_mode == 'single'",
+            dateInput(
+              inputId = "raster_date",
+              label   = "Date :",
+              value   = Sys.Date() - 1
+            )
+          ),
+          conditionalPanel(
+            condition = "input.raster_date_mode == 'range'",
+            dateRangeInput(
+              inputId = "raster_date_range",
+              label   = "Intervalle :",
+              start   = Sys.Date() - 30,
+              end     = Sys.Date() - 1
+            )
+          ),
+          sliderInput(
+            inputId = "raster_bandwidth",
+            label   = "Lissage (degrés) :",
+            min = 0.5, max = 5, value = 1.5, step = 0.25
+          )
+        ),
+        column(
+          width = 9,
+          leafletOutput("raster_map", height = "75vh")
+        )
+      )
+    )
   )
 )
 
@@ -87,7 +158,7 @@ server <- function(input, output, session) {
   selected_climate_id <- reactiveVal(
     if (data_available) station_registry$climate_id[[1]] else NULL
   )
-  selected_metric <- reactiveVal("Mean Temp (°C)")
+  selected_metric <- reactiveVal("mean_temp")
 
   # ── Map ───────────────────────────────────────────────────────────────────
   output$map <- renderLeaflet({
@@ -115,7 +186,7 @@ server <- function(input, output, session) {
   observeEvent(input$map_marker_click, {
     cid <- input$map_marker_click$id
     selected_climate_id(cid)
-    selected_metric("Mean Temp (°C)")
+    selected_metric("mean_temp")
     updateSelectInput(session, "station_select", selected = cid)
     updateNavbarPage(session, "navbar", selected = "Données de la station")
   })
@@ -125,7 +196,7 @@ server <- function(input, output, session) {
     input$station_select,
     {
       selected_climate_id(input$station_select)
-      selected_metric("Mean Temp (°C)")
+      selected_metric("mean_temp")
     },
     ignoreInit = TRUE
   )
@@ -141,7 +212,7 @@ server <- function(input, output, session) {
   # ── Station data ──────────────────────────────────────────────────────────
   station_data <- reactive({
     req(selected_climate_id())
-    load_station_data(selected_climate_id())
+    load_station_data(con, selected_climate_id())
   })
 
   # ── Chart ─────────────────────────────────────────────────────────────────
@@ -156,6 +227,65 @@ server <- function(input, output, session) {
     d <- station_data()
     req(d)
     build_table(d)
+  })
+
+  # ── Raster map ────────────────────────────────────────────────────────────
+  output$raster_map <- renderLeaflet({
+    req(data_available)
+
+    metric <- req(input$raster_metric)
+
+    if (input$raster_date_mode == "single") {
+      date_from <- date_to <- req(input$raster_date)
+    } else {
+      dr        <- req(input$raster_date_range)
+      date_from <- dr[1]
+      date_to   <- dr[2]
+    }
+
+    r <- withProgress(message = "Calcul du lissage...", {
+      build_metric_raster(
+        con, metric, date_from, date_to,
+        bandwidth = input$raster_bandwidth
+      )
+    })
+
+    m <- leaflet() |>
+      addTiles() |>
+      setView(lng = -72, lat = 52, zoom = 5)
+
+    if (is.null(r)) {
+      return(m)
+    }
+
+    vals  <- terra::values(r, na.rm = TRUE)
+    pal   <- colorNumeric(
+      palette  = "Spectral",
+      domain   = range(vals),
+      reverse  = TRUE,
+      na.color = "transparent"
+    )
+    label <- FRENCH_COLS[[metric]]
+
+    m |>
+      leafem::addStarsImage(stars::st_as_stars(r), colors = pal, opacity = 0.7) |>
+      addCircleMarkers(
+        data        = station_registry,
+        lng         = ~lon,
+        lat         = ~lat,
+        radius      = 4,
+        color       = "black",
+        weight      = 1,
+        fillColor   = "white",
+        fillOpacity = 0.8,
+        label       = ~station_name
+      ) |>
+      addLegend(
+        position = "bottomright",
+        pal      = pal,
+        values   = vals,
+        title    = label
+      )
   })
 }
 

@@ -1,93 +1,51 @@
 # R/data_helpers.R
 
 library(dplyr)
-library(readr)
+library(dbplyr)
+library(DBI)
+library(duckdb)
 library(htmltools)
 
 # All columns shown in the station detail table (in display order)
 DISPLAY_COLS <- c(
-  "Date/Time",
-  "Max Temp (C)",
-  "Min Temp (C)",
-  "Mean Temp (C)",
-  "Heat Deg Days (C)",
-  "Cool Deg Days (C)",
-  "Total Rain (mm)",
-  "Total Snow (cm)",
-  "Total Precip (mm)",
-  "Snow on Grnd (cm)",
-  "Dir of Max Gust (10s deg)",
-  "Spd of Max Gust (km/h)"
+  "date",
+  "max_temp", "min_temp", "mean_temp",
+  "heat_deg_days", "cool_deg_days",
+  "total_rain", "total_snow", "total_precip",
+  "snow_on_ground", "gust_dir", "gust_speed"
 )
 
-# Metric columns only (excludes Date/Time)
-METRIC_COLS <- DISPLAY_COLS[DISPLAY_COLS != "Date/Time"]
+# Metric columns only (excludes date)
+METRIC_COLS <- DISPLAY_COLS[DISPLAY_COLS != "date"]
 
-# English → French label mapping for table headers and chart y-axis
+# snake_case → French label mapping for table headers and chart y-axis
 FRENCH_COLS <- c(
-  "Date/Time" = "Date",
-  "Max Temp (C)" = "Temp. max. (°C)",
-  "Min Temp (C)" = "Temp. min. (°C)",
-  "Mean Temp (C)" = "Temp. moy. (°C)",
-  "Heat Deg Days (C)" = "Degrés-jours de chauffe (°C)",
-  "Cool Deg Days (C)" = "Degrés-jours de clim. (°C)",
-  "Total Rain (mm)" = "Pluie totale (mm)",
-  "Total Snow (cm)" = "Neige totale (cm)",
-  "Total Precip (mm)" = "Précip. totales (mm)",
-  "Snow on Grnd (cm)" = "Neige au sol (cm)",
-  "Dir of Max Gust (10s deg)" = "Dir. rafale max. (diz. °)",
-  "Spd of Max Gust (km/h)" = "Vitesse rafale max. (km/h)"
+  "date"           = "Date",
+  "max_temp"       = "Temp. max. (°C)",
+  "min_temp"       = "Temp. min. (°C)",
+  "mean_temp"      = "Temp. moy. (°C)",
+  "heat_deg_days"  = "Degrés-jours de chauffe (°C)",
+  "cool_deg_days"  = "Degrés-jours de clim. (°C)",
+  "total_rain"     = "Pluie totale (mm)",
+  "total_snow"     = "Neige totale (cm)",
+  "total_precip"   = "Précip. totales (mm)",
+  "snow_on_ground" = "Neige au sol (cm)",
+  "gust_dir"       = "Dir. rafale max. (diz. °)",
+  "gust_speed"     = "Vitesse rafale max. (km/h)"
 )
 
 # Subset shown in hover tooltip on the map.
-# Note: "Total Precip (mm)" uses a shorter French label here than in FRENCH_COLS
-# to keep tooltip compact.
 TOOLTIP_COLS <- c(
-  "Max Temp (C)" = "Temp. max. (°C)",
-  "Min Temp (C)" = "Temp. min. (°C)",
-  "Mean Temp (C)" = "Temp. moy. (°C)",
-  "Total Precip (mm)" = "Précip. (mm)",
-  "Snow on Grnd (cm)" = "Neige au sol (cm)",
-  "Spd of Max Gust (km/h)" = "Rafale max. (km/h)"
+  "max_temp"       = "Temp. max. (°C)",
+  "min_temp"       = "Temp. min. (°C)",
+  "mean_temp"      = "Temp. moy. (°C)",
+  "total_precip"   = "Précip. (mm)",
+  "snow_on_ground" = "Neige au sol (cm)",
+  "gust_speed"     = "Rafale max. (km/h)"
 )
 
-COL_TYPES <- cols(
-  "Longitude (x)" = col_double(),
-  "Latitude (y)" = col_double(),
-  "Station Name" = col_character(),
-  "Climate ID" = col_character(),
-  "Date/Time" = col_date(),
-  "Year" = col_integer(),
-  "Month" = col_integer(),
-  "Day" = col_integer(),
-  "Data Quality" = col_character(),
-  "Max Temp (°C)" = col_double(),
-  "Max Temp Flag" = col_character(),
-  "Min Temp (°C)" = col_double(),
-  "Min Temp Flag" = col_character(),
-  "Mean Temp (°C)" = col_double(),
-  "Mean Temp Flag" = col_character(),
-  "Heat Deg Days (°C)" = col_double(),
-  "Heat Deg Days Flag" = col_character(),
-  "Cool Deg Days (°C)" = col_double(),
-  "Cool Deg Days Flag" = col_character(),
-  "Total Rain (mm)" = col_double(),
-  "Total Rain Flag" = col_character(),
-  "Total Snow (cm)" = col_double(),
-  "Total Snow Flag" = col_character(),
-  "Total Precip (mm)" = col_double(),
-  "Total Precip Flag" = col_character(),
-  "Snow on Grnd (cm)" = col_double(),
-  "Snow on Grnd Flag" = col_character(),
-  "Dir of Max Gust (10s deg)" = col_double(),
-  "Dir of Max Gust Flag" = col_character(),
-  "Spd of Max Gust (km/h)" = col_double(),
-  "Spd of Max Gust Flag" = col_character()
-)
-
-
-# Build HTML string for Leaflet hover tooltip
-# summary: named numeric vector from get_yesterday_summary(), names are English col names
+# Build HTML string for Leaflet hover tooltip.
+# summary: named numeric vector from get_yesterday_summary(), names are snake_case col names.
 build_tooltip_html <- function(station_name, summary) {
   header <- sprintf("<b>%s</b>", htmltools::htmlEscape(station_name))
 
@@ -95,7 +53,6 @@ build_tooltip_html <- function(station_name, summary) {
     return(paste(header, "Donn\u00e9es non disponibles", sep = "<br>"))
   }
 
-  # Only show columns defined in TOOLTIP_COLS, in TOOLTIP_COLS order
   cols_to_show <- intersect(names(TOOLTIP_COLS), names(summary))
   lines <- vapply(
     cols_to_show,
@@ -109,128 +66,53 @@ build_tooltip_html <- function(station_name, summary) {
   paste(c(header, lines), collapse = "<br>")
 }
 
-# Scan data_dir, read first row of each station's most recent CSV,
-# return data frame: climate_id, station_name, lon, lat
-build_station_registry <- function(data_dir = "data") {
-  files <- list.files(
-    data_dir,
-    pattern = "^climate_daily_QC_.+_\\d{4}_P1D\\.csv$",
-    full.names = TRUE
-  )
-
-  if (length(files) == 0) {
-    return(NULL)
-  }
-
-  file_info <- data.frame(
-    path = files,
-    climate_id = sub(
-      ".*climate_daily_QC_(.+)_\\d{4}_P1D\\.csv$",
-      "\\1",
-      basename(files)
-    ),
-    year = as.integer(sub(
-      ".*climate_daily_QC_.+_(\\d{4})_P1D\\.csv$",
-      "\\1",
-      basename(files)
-    )),
-    stringsAsFactors = FALSE
-  )
-
-  most_recent <- file_info |>
+# Query the observations table and return a data frame:
+#   climate_id, station_name, lon, lat
+# Returns NULL if the table doesn't exist or is empty.
+build_station_registry <- function(con) {
+  if (!DBI::dbExistsTable(con, "observations")) return(NULL)
+  result <- tbl(con, "observations") |>
     group_by(climate_id) |>
-    slice_max(year, n = 1, with_ties = FALSE) |>
-    ungroup()
-
-  rows <- lapply(seq_len(nrow(most_recent)), function(i) {
-    tryCatch(
-      {
-        d <- read_csv(most_recent$path[i], n_max = 1, show_col_types = FALSE)
-        data.frame(
-          climate_id = most_recent$climate_id[i],
-          station_name = d[["Station Name"]],
-          lon = d[["Longitude (x)"]],
-          lat = d[["Latitude (y)"]],
-          stringsAsFactors = FALSE
-        )
-      },
-      error = function(e) {
-        warning(sprintf(
-          "Impossible de lire le fichier %s : %s",
-          most_recent$path[i],
-          conditionMessage(e)
-        ))
-        NULL
-      }
-    )
-  })
-
-  do.call(rbind, Filter(Negate(is.null), rows))
+    summarise(
+      station_name = min(station_name, na.rm = TRUE),
+      lon          = min(lon, na.rm = TRUE),
+      lat          = min(lat, na.rm = TRUE),
+      .groups      = "drop"
+    ) |>
+    arrange(station_name) |>
+    collect()
+  if (nrow(result) == 0) NULL else result
 }
 
 # Return a named numeric vector of non-NA TOOLTIP_COLS values for yesterday.
 # ref_date is injectable for testing (defaults to today).
-get_yesterday_summary <- function(
-  climate_id,
-  data_dir = "data",
-  ref_date = Sys.Date()
-) {
-  yesterday <- as.character(ref_date - 1)
-  year <- format(ref_date - 1, "%Y")
-
-  pattern <- sprintf("^climate_daily_QC_%s_%s_P1D\\.csv$", climate_id, year)
-  files <- list.files(data_dir, pattern = pattern, full.names = TRUE)
-
-  if (length(files) == 0) {
-    return(NULL)
-  }
-
-  d <- read_csv(files[[1]], show_col_types = FALSE)
-  row <- d[d[["Date/Time"]] == yesterday, ]
-
-  if (nrow(row) == 0) {
-    return(NULL)
-  }
-
-  vals <- vapply(
-    names(TOOLTIP_COLS),
-    function(col) {
-      v <- row[[col]]
-      if (length(v) == 0 || is.na(v)) NA_real_ else as.numeric(v)
-    },
-    numeric(1)
-  )
-
+get_yesterday_summary <- function(con, climate_id, ref_date = Sys.Date()) {
+  yesterday <- as.Date(ref_date - 1)
+  cid <- climate_id
+  row <- tbl(con, "observations") |>
+    filter(climate_id == !!cid, date == !!yesterday) |>
+    select(max_temp, min_temp, mean_temp, total_precip, snow_on_ground, gust_speed) |>
+    collect()
+  if (nrow(row) == 0) return(NULL)
+  vals <- unlist(row[1, ])
   vals <- vals[!is.na(vals)]
-  if (length(vals) == 0) {
-    return(NULL)
-  }
-  vals
+  if (length(vals) == 0) NULL else vals
 }
 
-# Read and bind all yearly CSVs for a climate_id. Returns a data frame
-# with Date/Time parsed as Date and rows sorted chronologically.
-load_station_data <- function(climate_id, data_dir = "data") {
-  pattern <- sprintf("^climate_daily_QC_%s_\\d{4}_P1D\\.csv$", climate_id)
-  files <- list.files(data_dir, pattern = pattern, full.names = TRUE)
-
-  if (length(files) == 0) {
-    return(NULL)
-  }
-
-  parts <- lapply(files, function(f) {
-    tryCatch(
-      read_csv(
-        f,
-        show_col_types = FALSE,
-        col_types = COL_TYPES,
-        locale = locale(encoding = "latin1")
-      ),
-      error = function(e) NULL
-    )
-  })
-
-  d <- bind_rows(Filter(Negate(is.null), parts))
-  d[["Date/Time"]] <- as.Date(d[["Date/Time"]])
-  arrange(d, `Date/Time`)
+# Query all observations for climate_id. Returns a data frame with DISPLAY_COLS
+# sorted chronologically, or NULL if the station has no data.
+load_station_data <- function(con, climate_id) {
+  if (!DBI::dbExistsTable(con, "observations")) return(NULL)
+  cid <- climate_id
+  result <- tbl(con, "observations") |>
+    filter(climate_id == !!cid) |>
+    select(date, max_temp, min_temp, mean_temp,
+           heat_deg_days, cool_deg_days,
+           total_rain, total_snow, total_precip,
+           snow_on_ground, gust_dir, gust_speed) |>
+    arrange(date) |>
+    collect()
+  if (nrow(result) == 0) return(NULL)
+  result$date <- as.Date(result$date)
+  result
 }

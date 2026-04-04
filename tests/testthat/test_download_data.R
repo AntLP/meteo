@@ -28,9 +28,14 @@ test_that("download_qc_data skips files that already exist", {
   writeLines("already here", existing_file)
   mtime_before <- file.mtime(existing_file)
 
-  # Mock get_csv_list to return just this one filename
+  # Mock get_csv_list to return a one-row data.frame
   local_mocked_bindings(
-    get_csv_list = function(...) "climate_daily_QC_7017270_2025_P1D.csv",
+    get_csv_list = function(...) data.frame(
+      name          = "climate_daily_QC_7017270_2025_P1D.csv",
+      link          = "http://example.com/climate_daily_QC_7017270_2025_P1D.csv",
+      last_modified = as.POSIXct("2025-03-13 12:52", format = "%Y-%m-%d %H:%M"),
+      stringsAsFactors = FALSE
+    ),
     {
       suppressMessages(
         download_qc_data(

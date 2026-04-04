@@ -4,10 +4,10 @@ library(testthat)
 source("../../R/data_helpers.R")
 
 test_that("build_station_registry returns one row per station", {
-  tmp <- make_mock_data_dir()
-  on.exit(unlink(tmp, recursive = TRUE))
+  con <- make_mock_db()
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
 
-  registry <- build_station_registry(data_dir = tmp)
+  registry <- build_station_registry(con)
 
   expect_equal(nrow(registry), 1)
   expect_equal(registry$climate_id,   "7017270")
@@ -16,67 +16,55 @@ test_that("build_station_registry returns one row per station", {
   expect_equal(registry$lat,           45.52)
 })
 
-test_that("build_station_registry returns NULL for empty dir", {
-  tmp <- tempfile()
-  dir.create(tmp)
-  on.exit(unlink(tmp, recursive = TRUE))
+test_that("build_station_registry returns NULL for empty observations", {
+  con <- DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
 
-  expect_null(build_station_registry(data_dir = tmp))
+  expect_null(build_station_registry(con))
 })
 
 test_that("get_yesterday_summary returns named numeric vector for known date", {
-  tmp <- make_mock_data_dir(dates = c("2026-03-31"))
-  on.exit(unlink(tmp, recursive = TRUE))
+  con <- make_mock_db(dates = c("2026-03-31"))
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
 
   result <- get_yesterday_summary(
+    con,
     climate_id = "7017270",
-    data_dir   = tmp,
     ref_date   = as.Date("2026-04-01")
   )
 
   expect_true(is.numeric(result))
   expect_named(result, intersect(names(TOOLTIP_COLS), names(result)))
-  expect_equal(unname(result["Mean Temp (C)"]), 1.5)
+  expect_equal(unname(result["mean_temp"]), 1.5)
 })
 
 test_that("get_yesterday_summary returns NULL when date not in data", {
-  tmp <- make_mock_data_dir(dates = c("2026-03-30"))
-  on.exit(unlink(tmp, recursive = TRUE))
+  con <- make_mock_db(dates = c("2026-03-30"))
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
 
   result <- get_yesterday_summary(
+    con,
     climate_id = "7017270",
-    data_dir   = tmp,
     ref_date   = as.Date("2026-04-01")  # yesterday = 2026-03-31, not in data
   )
 
   expect_null(result)
 })
 
-test_that("load_station_data binds all years and returns sorted Date column", {
-  tmp <- make_mock_data_dir(dates = c("2026-03-30", "2026-03-31"))
-  on.exit(unlink(tmp, recursive = TRUE))
+test_that("load_station_data returns all rows sorted by date", {
+  con <- make_mock_db(dates = c("2025-12-31", "2026-03-30", "2026-03-31"))
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
 
-  # Add a second year CSV manually
-  second_year <- make_mock_data_dir(
-    climate_id = "7017270",
-    dates      = c("2025-12-31")
-  )
-  file.copy(
-    list.files(second_year, full.names = TRUE),
-    tmp
-  )
-  unlink(second_year, recursive = TRUE)
+  d <- load_station_data(con, "7017270")
 
-  d <- load_station_data("7017270", data_dir = tmp)
-
-  expect_s3_class(d[["Date/Time"]], "Date")
+  expect_s3_class(d[["date"]], "Date")
   expect_equal(nrow(d), 3)
-  expect_true(all(diff(as.numeric(d[["Date/Time"]])) >= 0))  # sorted
+  expect_true(all(diff(as.numeric(d[["date"]])) >= 0))  # sorted
 })
 
 test_that("load_station_data returns NULL for unknown climate_id", {
-  tmp <- make_mock_data_dir()
-  on.exit(unlink(tmp, recursive = TRUE))
+  con <- make_mock_db()
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
 
-  expect_null(load_station_data("9999999", data_dir = tmp))
+  expect_null(load_station_data(con, "9999999"))
 })

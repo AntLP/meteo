@@ -3,4 +3,4 @@
 # Run this script from the project root to populate data/.
 
 source("R/download_data.R")
-download_qc_data()
+update_data()
