@@ -30,23 +30,30 @@ get_station_metric <- function(con, metric, date_from, date_to) {
 # Returns a single-layer SpatRaster, or NULL when fewer than 3 stations
 # have non-NA data for the requested period.
 build_metric_raster <- function(
-  con, metric, date_from, date_to,
-  bandwidth  = 1.5,
+  con,
+  metric,
+  date_from,
+  date_to,
+  bandwidth = 1.5,
   resolution = 0.25
 ) {
   stations <- get_station_metric(con, metric, date_from, date_to)
-  if (nrow(stations) < 3) return(NULL)
+  if (nrow(stations) < 3) {
+    return(NULL)
+  }
 
   # Grid extent: station bounds padded by 2× bandwidth
-  pad     <- 2 * bandwidth
-  lon_min <- floor(min(stations$lon)   - pad)
+  pad <- 2 * bandwidth
+  lon_min <- floor(min(stations$lon) - pad)
   lon_max <- ceiling(max(stations$lon) + pad)
-  lat_min <- floor(min(stations$lat)   - pad)
+  lat_min <- floor(min(stations$lat) - pad)
   lat_max <- ceiling(max(stations$lat) + pad)
 
   r <- terra::rast(
-    xmin = lon_min, xmax = lon_max,
-    ymin = lat_min, ymax = lat_max,
+    xmin = lon_min,
+    xmax = lon_max,
+    ymin = lat_min,
+    ymax = lat_max,
     resolution = resolution,
     crs = "EPSG:4326"
   )
@@ -61,16 +68,16 @@ build_metric_raster <- function(
 
   # Isotropic kernel in real space: correct lon bandwidth for latitude
   lat_mid <- (lat_min + lat_max) / 2
-  bw_lon  <- bandwidth / cos(lat_mid * pi / 180)
-  bw_lat  <- bandwidth
+  bw_lon <- bandwidth / cos(lat_mid * pi / 180)
+  bw_lat <- bandwidth
 
   # Weight matrix (ncell × nstation)
   dlon <- outer(gx, sx, `-`)
   dlat <- outer(gy, sy, `-`)
-  w    <- exp(-(dlon^2 / (2 * bw_lon^2) + dlat^2 / (2 * bw_lat^2)))
+  w <- exp(-(dlon^2 / (2 * bw_lon^2) + dlat^2 / (2 * bw_lat^2)))
 
   # Weighted mean; mask cells with no station within ~3 bandwidths
-  vals             <- rowSums(sweep(w, 2, sv, `*`)) / rowSums(w)
+  vals <- rowSums(sweep(w, 2, sv, `*`)) / rowSums(w)
   vals[apply(w, 1, max) < exp(-4.5)] <- NA_real_
 
   terra::values(r) <- vals

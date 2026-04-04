@@ -90,38 +90,41 @@ ui <- navbarPage(
         column(
           width = 3,
           selectInput(
-            inputId  = "raster_metric",
-            label    = "Indicateur :",
-            choices  = setNames(METRIC_COLS, FRENCH_COLS[METRIC_COLS]),
+            inputId = "raster_metric",
+            label = "Indicateur :",
+            choices = setNames(METRIC_COLS, FRENCH_COLS[METRIC_COLS]),
             selected = "mean_temp"
           ),
           radioButtons(
-            inputId  = "raster_date_mode",
-            label    = "Période :",
-            choices  = c("Date unique" = "single", "Intervalle" = "range"),
-            inline   = TRUE
+            inputId = "raster_date_mode",
+            label = "Période :",
+            choices = c("Date unique" = "single", "Intervalle" = "range"),
+            inline = TRUE
           ),
           conditionalPanel(
             condition = "input.raster_date_mode == 'single'",
             dateInput(
               inputId = "raster_date",
-              label   = "Date :",
-              value   = Sys.Date() - 1
+              label = "Date :",
+              value = Sys.Date() - 1
             )
           ),
           conditionalPanel(
             condition = "input.raster_date_mode == 'range'",
             dateRangeInput(
               inputId = "raster_date_range",
-              label   = "Intervalle :",
-              start   = Sys.Date() - 30,
-              end     = Sys.Date() - 1
+              label = "Intervalle :",
+              start = Sys.Date() - 30,
+              end = Sys.Date() - 1
             )
           ),
           sliderInput(
             inputId = "raster_bandwidth",
-            label   = "Lissage (degrés) :",
-            min = 0.5, max = 5, value = 1.5, step = 0.25
+            label = "Lissage (degrés) :",
+            min = 0.5,
+            max = 5,
+            value = 1.5,
+            step = 0.25
           )
         ),
         column(
@@ -238,14 +241,17 @@ server <- function(input, output, session) {
     if (input$raster_date_mode == "single") {
       date_from <- date_to <- req(input$raster_date)
     } else {
-      dr        <- req(input$raster_date_range)
+      dr <- req(input$raster_date_range)
       date_from <- dr[1]
-      date_to   <- dr[2]
+      date_to <- dr[2]
     }
 
     r <- withProgress(message = "Calcul du lissage...", {
       build_metric_raster(
-        con, metric, date_from, date_to,
+        con,
+        metric,
+        date_from,
+        date_to,
         bandwidth = input$raster_bandwidth
       )
     })
@@ -258,33 +264,37 @@ server <- function(input, output, session) {
       return(m)
     }
 
-    vals  <- terra::values(r, na.rm = TRUE)
-    pal   <- colorNumeric(
-      palette  = "Spectral",
-      domain   = range(vals),
-      reverse  = TRUE,
+    vals <- terra::values(r, na.rm = TRUE)
+    pal <- colorNumeric(
+      palette = "Spectral",
+      domain = range(vals),
+      reverse = TRUE,
       na.color = "transparent"
     )
     label <- FRENCH_COLS[[metric]]
 
     m |>
-      leafem::addStarsImage(stars::st_as_stars(r), colors = pal, opacity = 0.7) |>
+      leafem::addStarsImage(
+        stars::st_as_stars(r),
+        colors = pal,
+        opacity = 0.7
+      ) |>
       addCircleMarkers(
-        data        = station_registry,
-        lng         = ~lon,
-        lat         = ~lat,
-        radius      = 4,
-        color       = "black",
-        weight      = 1,
-        fillColor   = "white",
+        data = station_registry,
+        lng = ~lon,
+        lat = ~lat,
+        radius = 4,
+        color = "black",
+        weight = 1,
+        fillColor = "white",
         fillOpacity = 0.8,
-        label       = ~station_name
+        label = ~station_name
       ) |>
       addLegend(
         position = "bottomright",
-        pal      = pal,
-        values   = vals,
-        title    = label
+        pal = pal,
+        values = vals,
+        title = label
       )
   })
 }

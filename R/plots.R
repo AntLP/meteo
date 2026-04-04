@@ -10,8 +10,8 @@ build_chart <- function(data, metric_col) {
 
   plot_ly(
     data = data,
-    x    = ~date,
-    y    = as.formula(paste0("~", metric_col)),
+    x = ~date,
+    y = as.formula(paste0("~", metric_col)),
     type = "scatter",
     mode = "lines",
     line = list(color = "#1565C0", width = 1.5),
@@ -33,19 +33,20 @@ build_table <- function(data) {
 
   datatable(
     display_data,
-    rownames  = FALSE,
+    rownames = FALSE,
     selection = "none",
-    options   = list(
+    options = list(
       pageLength = 25,
-      scrollX    = TRUE,
-      language   = list(
-        search      = "Rechercher :",
-        lengthMenu  = "Afficher _MENU_ entrées",
-        info        = "Entrées _START_ à _END_ sur _TOTAL_",
-        paginate    = list(previous = "Précédent", `next` = "Suivant"),
+      scrollX = TRUE,
+      language = list(
+        search = "Rechercher :",
+        lengthMenu = "Afficher _MENU_ entrées",
+        info = "Entrées _START_ à _END_ sur _TOTAL_",
+        paginate = list(previous = "Précédent", `next` = "Suivant"),
         zeroRecords = "Aucun résultat trouvé"
       ),
-      initComplete = JS("
+      initComplete = JS(
+        "
         function(settings, json) {
           var table = this.api();
           $(table.table().header()).find('th').on('click', function() {
@@ -55,7 +56,8 @@ build_table <- function(data) {
             }
           });
         }
-      ")
+      "
+      )
     )
   )
 }
