@@ -41,36 +41,14 @@ FRENCH_COLS <- c(
   "gust_speed" = "Vitesse rafale max. (km/h)"
 )
 
-# Subset shown in hover tooltip on the map.
-TOOLTIP_COLS <- c(
-  "max_temp" = "Temp. max. (°C)",
-  "min_temp" = "Temp. min. (°C)",
-  "mean_temp" = "Temp. moy. (°C)",
-  "total_precip" = "Précip. (mm)",
-  "snow_on_ground" = "Neige au sol (cm)",
-  "gust_speed" = "Rafale max. (km/h)"
-)
-
 # Build HTML string for Leaflet hover tooltip.
-# summary: named numeric vector from get_yesterday_summary(), names are snake_case col names.
-build_tooltip_html <- function(station_name, summary) {
-  header <- sprintf("<b>%s</b>", htmltools::htmlEscape(station_name))
-
-  if (is.null(summary) || length(summary) == 0) {
-    return(paste(header, "Donn\u00e9es non disponibles", sep = "<br>"))
-  }
-
-  cols_to_show <- intersect(names(TOOLTIP_COLS), names(summary))
-  lines <- vapply(
-    cols_to_show,
-    function(col) {
-      label <- TOOLTIP_COLS[[col]]
-      sprintf("%s : %.1f", label, summary[[col]])
-    },
-    character(1)
+build_tooltip_html <- function(station_name, first_obs, last_obs) {
+  sprintf(
+    "<b>%s</b><br>Premi\u00e8re observation : %s<br>Derni\u00e8re observation : %s",
+    htmltools::htmlEscape(station_name),
+    format(first_obs, "%Y-%m-%d"),
+    format(last_obs,  "%Y-%m-%d")
   )
-
-  paste(c(header, lines), collapse = "<br>")
 }
 
 # Query the observations table and return a data frame:
@@ -84,37 +62,52 @@ build_station_registry <- function(con) {
     group_by(climate_id) |>
     summarise(
       station_name = min(station_name, na.rm = TRUE),
-      lon = min(lon, na.rm = TRUE),
-      lat = min(lat, na.rm = TRUE),
+      lon          = min(lon,          na.rm = TRUE),
+      lat          = min(lat,          na.rm = TRUE),
+      first_obs    = min(date,         na.rm = TRUE),
+      last_obs     = max(date,         na.rm = TRUE),
       .groups = "drop"
     ) |>
     arrange(station_name) |>
     collect()
-  if (nrow(result) == 0) NULL else result
+  if (nrow(result) == 0) return(NULL)
+  result$first_obs <- as.Date(result$first_obs)
+  result$last_obs  <- as.Date(result$last_obs)
+  result
 }
 
-# Return a named numeric vector of non-NA TOOLTIP_COLS values for yesterday.
-# ref_date is injectable for testing (defaults to today).
-get_yesterday_summary <- function(con, climate_id, ref_date = Sys.Date()) {
-  yesterday <- as.Date(ref_date - 1)
-  cid <- climate_id
-  row <- tbl(con, "observations") |>
-    filter(climate_id == !!cid, date == !!yesterday) |>
-    select(
-      max_temp,
-      min_temp,
-      mean_temp,
-      total_precip,
-      snow_on_ground,
-      gust_speed
-    ) |>
-    collect()
-  if (nrow(row) == 0) {
-    return(NULL)
+# Query yearly averages (and optional quantiles) across all stations for one metric.
+# quantiles: numeric vector of percentile values in [0, 100], e.g. c(10, 25, 75, 90).
+# Returns a data frame with columns: year, mean, and one column per quantile named p<value>.
+# Returns NULL if the table doesn't exist or has no data.
+get_yearly_stats <- function(con, metric, quantiles = numeric(0)) {
+  if (!DBI::dbExistsTable(con, "observations")) return(NULL)
+
+  q_cols <- if (length(quantiles) > 0) {
+    paste(
+      sprintf(
+        ", PERCENTILE_CONT(%.10f) WITHIN GROUP (ORDER BY \"%s\") AS \"%s\"",
+        quantiles / 100,
+        metric,
+        paste0("p", gsub("\\.", "_", as.character(quantiles)))
+      ),
+      collapse = ""
+    )
+  } else {
+    ""
   }
-  vals <- unlist(row[1, ])
-  vals <- vals[!is.na(vals)]
-  if (length(vals) == 0) NULL else vals
+
+  sql <- sprintf(
+    "SELECT year, AVG(\"%s\") AS mean%s
+     FROM observations
+     WHERE \"%s\" IS NOT NULL
+     GROUP BY year
+     ORDER BY year",
+    metric, q_cols, metric
+  )
+
+  result <- DBI::dbGetQuery(con, sql)
+  if (nrow(result) == 0) NULL else result
 }
 
 # Query all observations for climate_id. Returns a data frame with DISPLAY_COLS

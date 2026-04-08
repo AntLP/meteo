@@ -41,18 +41,10 @@ if (data_available) {
     station_registry$station_name
   )
 
-  # Pre-compute yesterday's summaries for all stations (map tooltips)
-  yesterday_summaries <- lapply(
-    station_registry$climate_id,
-    function(cid) get_yesterday_summary(con, cid)
-  )
-  names(yesterday_summaries) <- station_registry$climate_id
-
-  tooltip_html <- mapply(
-    function(name, cid) build_tooltip_html(name, yesterday_summaries[[cid]]),
+  tooltip_html <- build_tooltip_html(
     station_registry$station_name,
-    station_registry$climate_id,
-    SIMPLIFY = TRUE
+    station_registry$first_obs,
+    station_registry$last_obs
   )
 }
 
@@ -79,6 +71,40 @@ ui <- navbarPage(
       plotlyOutput("chart", height = "400px"),
       br(),
       DTOutput("table")
+    )
+  ),
+
+  tabPanel(
+    "Tendances annuelles",
+    fluidPage(
+      br(),
+      fluidRow(
+        column(
+          width = 3,
+          selectInput(
+            inputId = "yearly_metric",
+            label = "Indicateur :",
+            choices = setNames(METRIC_COLS, FRENCH_COLS[METRIC_COLS]),
+            selected = "mean_temp"
+          ),
+          selectizeInput(
+            inputId = "yearly_quantiles",
+            label = "Quantiles (%) :",
+            choices = c(5, 10, 25, 75, 90, 95),
+            selected = NULL,
+            multiple = TRUE,
+            options = list(
+              create = TRUE,
+              createFilter = "^(100|[0-9]{1,2})(\\.[0-9]+)?$",
+              placeholder = "Ajouter un quantile\u2026"
+            )
+          )
+        ),
+        column(
+          width = 9,
+          plotlyOutput("yearly_chart", height = "65vh")
+        )
+      )
     )
   ),
 
@@ -230,6 +256,26 @@ server <- function(input, output, session) {
     d <- station_data()
     req(d)
     build_table(d)
+  })
+
+  # ── Yearly trends ─────────────────────────────────────────────────────────
+  yearly_data <- reactive({
+    req(data_available)
+    quantiles <- sort(as.numeric(input$yearly_quantiles))
+    quantiles <- quantiles[
+      !is.na(quantiles) & quantiles >= 0 & quantiles <= 100
+    ]
+    get_yearly_stats(con, input$yearly_metric, quantiles)
+  })
+
+  output$yearly_chart <- renderPlotly({
+    d <- yearly_data()
+    req(d)
+    quantiles <- sort(as.numeric(input$yearly_quantiles))
+    quantiles <- quantiles[
+      !is.na(quantiles) & quantiles >= 0 & quantiles <= 100
+    ]
+    build_yearly_chart(d, input$yearly_metric, quantiles)
   })
 
   # ── Raster map ────────────────────────────────────────────────────────────

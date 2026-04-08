@@ -1,96 +1,57 @@
 # R/download_data.R
 
-library(rvest)
 library(httr)
-library(readr)
+library(cli)
 library(dplyr)
 library(dbplyr)
 library(DBI)
 library(duckdb)
 
-# Clean snake_case column names for Weather Canada daily climate CSVs.
-# Order matches the 31 columns in the file header exactly.
-.ECCC_COL_NAMES <- c(
-  "lon",
-  "lat",
-  "station_name",
-  "climate_id",
-  "date",
-  "year",
-  "month",
-  "day",
-  "data_quality",
-  "max_temp",
-  "max_temp_flag",
-  "min_temp",
-  "min_temp_flag",
-  "mean_temp",
-  "mean_temp_flag",
-  "heat_deg_days",
-  "heat_deg_days_flag",
-  "cool_deg_days",
-  "cool_deg_days_flag",
-  "total_rain",
-  "total_rain_flag",
-  "total_snow",
-  "total_snow_flag",
-  "total_precip",
-  "total_precip_flag",
-  "snow_on_ground",
-  "snow_on_ground_flag",
-  "gust_dir",
-  "gust_dir_flag",
-  "gust_speed",
-  "gust_speed_flag"
+# Named vector mapping snake_case column names → DuckDB SQL types.
+# Order matches the 31 columns in the Weather Canada daily climate CSV header.
+.ECCC_COLS <- c(
+  lon = "DOUBLE",
+  lat = "DOUBLE",
+  station_name = "VARCHAR",
+  climate_id = "VARCHAR",
+  date = "DATE",
+  year = "INTEGER",
+  month = "INTEGER",
+  day = "INTEGER",
+  data_quality = "VARCHAR",
+  max_temp = "DOUBLE",
+  max_temp_flag = "VARCHAR",
+  min_temp = "DOUBLE",
+  min_temp_flag = "VARCHAR",
+  mean_temp = "DOUBLE",
+  mean_temp_flag = "VARCHAR",
+  heat_deg_days = "DOUBLE",
+  heat_deg_days_flag = "VARCHAR",
+  cool_deg_days = "DOUBLE",
+  cool_deg_days_flag = "VARCHAR",
+  total_rain = "DOUBLE",
+  total_rain_flag = "VARCHAR",
+  total_snow = "DOUBLE",
+  total_snow_flag = "VARCHAR",
+  total_precip = "DOUBLE",
+  total_precip_flag = "VARCHAR",
+  snow_on_ground = "DOUBLE",
+  snow_on_ground_flag = "VARCHAR",
+  gust_dir = "DOUBLE",
+  gust_dir_flag = "VARCHAR",
+  gust_speed = "DOUBLE",
+  gust_speed_flag = "VARCHAR"
 )
 
-# readr col_types spec aligned with .ECCC_COL_NAMES order.
-.ECCC_COL_TYPES <- cols(
-  lon = col_double(),
-  lat = col_double(),
-  station_name = col_character(),
-  climate_id = col_character(),
-  date = col_date(format = "%Y-%m-%d"),
-  year = col_integer(),
-  month = col_integer(),
-  day = col_integer(),
-  data_quality = col_character(),
-  max_temp = col_double(),
-  max_temp_flag = col_character(),
-  min_temp = col_double(),
-  min_temp_flag = col_character(),
-  mean_temp = col_double(),
-  mean_temp_flag = col_character(),
-  heat_deg_days = col_double(),
-  heat_deg_days_flag = col_character(),
-  cool_deg_days = col_double(),
-  cool_deg_days_flag = col_character(),
-  total_rain = col_double(),
-  total_rain_flag = col_character(),
-  total_snow = col_double(),
-  total_snow_flag = col_character(),
-  total_precip = col_double(),
-  total_precip_flag = col_character(),
-  snow_on_ground = col_double(),
-  snow_on_ground_flag = col_character(),
-  gust_dir = col_double(),
-  gust_dir_flag = col_character(),
-  gust_speed = col_double(),
-  gust_speed_flag = col_character()
+# Pre-built DuckDB columns={} spec and CREATE TABLE column list.
+.ECCC_READ_CSV_COLS <- paste(
+  sprintf("'%s': '%s'", names(.ECCC_COLS), .ECCC_COLS),
+  collapse = ", "
 )
-
-# Read a Weather Canada daily climate CSV from a URL or file path.
-# Skips the original header row and applies .ECCC_COL_NAMES / .ECCC_COL_TYPES directly.
-download_file <- function(url) {
-  read_csv(
-    url,
-    col_names = .ECCC_COL_NAMES,
-    col_types = .ECCC_COL_TYPES,
-    skip = 1,
-    show_col_types = FALSE,
-    locale = locale(encoding = "latin1")
-  )
-}
+.ECCC_CREATE_COLS <- paste(
+  sprintf('"%s" %s', names(.ECCC_COLS), .ECCC_COLS),
+  collapse = ", "
+)
 
 # Filter a character vector of link hrefs to QC climate daily CSV filenames only.
 parse_csv_filenames <- function(links) {
@@ -123,15 +84,17 @@ get_csv_list <- function(base_url) {
   )
 }
 
-# Download CSVs described by a csv_list data.frame (as returned by get_csv_list),
-# parse each file into typed observations, and persist both to a DuckDB database.
+# Download CSVs described by a csv_list data.frame (as returned by get_csv_list)
+# and ingest them directly into DuckDB without loading into R memory.
+#
+# Downloads are parallelised via curl::multi_download. Ingestion uses DuckDB's
+# native read_csv() so data flows file → DuckDB with no R data.frame round-trip.
 #
 # Tables created / updated:
 #   csv_list     - mirrors the input data.frame; gains an ingested_at column
 #   observations - one row per daily observation across all files
 #
-# Files already on disk are not re-downloaded. Files whose name already has a
-# non-NULL ingested_at in the database are not re-processed.
+# Files already on disk are not re-downloaded. Files already ingested are skipped.
 # Warns (does not stop) on per-file failures.
 download_qc_data <- function(
   csv_list,
@@ -174,53 +137,124 @@ download_qc_data <- function(
   to_process <- csv_list[!csv_list$name %in% ingested, , drop = FALSE]
   message(sprintf("%d fichier(s) à traiter.", nrow(to_process)))
 
+  if (nrow(to_process) == 0L) {
+    return(invisible(NULL))
+  }
+
+  # ── Download ─────────────────────────────────────────────────────────────────
+  dests <- file.path(data_dir, to_process$name)
+  need_dl <- !file.exists(dests)
+
   downloaded <- 0L
-  skipped <- 0L
+  failed     <- 0L
+  skipped    <- sum(!need_dl)
 
-  for (i in seq_len(nrow(to_process))) {
-    fname <- to_process$name[i]
-    dest <- file.path(data_dir, fname)
-
-    if (!file.exists(dest)) {
+  if (any(need_dl)) {
+    cli::cli_progress_bar(
+      "Téléchargement",
+      total = sum(need_dl),
+      format = "{cli::pb_bar} {cli::pb_current}/{cli::pb_total} | {cli::pb_eta_str} | {cli::pb_status}"
+    )
+    for (i in which(need_dl)) {
+      cli::cli_progress_update(status = to_process$name[i])
       ok <- tryCatch(
         {
-          download.file(to_process$link[i], dest, quiet = TRUE, mode = "wb")
-          downloaded <- downloaded + 1L
+          download.file(to_process$link[i], dests[i], quiet = TRUE, mode = "wb")
           TRUE
         },
         error = function(e) {
           warning(sprintf(
             "Échec du téléchargement : %s\n%s",
-            fname,
+            to_process$name[i],
             conditionMessage(e)
           ))
           FALSE
         }
       )
-      if (!ok) next
-    } else {
-      skipped <- skipped + 1L
+      if (ok) {
+        downloaded <- downloaded + 1L
+      } else {
+        failed <- failed + 1L
+        if (file.exists(dests[i])) file.remove(dests[i])
+      }
     }
+    cli::cli_progress_done()
+  }
 
-    df <- download_file(dest)
-    if (!DBI::dbExistsTable(con, "observations")) {
-      DBI::dbWriteTable(con, "observations", df)
-    } else {
-      DBI::dbAppendTable(con, "observations", df)
-    }
-
-    DBI::dbExecute(
-      con,
-      "UPDATE csv_list SET ingested_at = CURRENT_TIMESTAMP WHERE name = ?",
-      params = list(fname)
+  if (failed > 0) {
+    cli::cli_alert_warning(
+      "{downloaded} t\u00e9l\u00e9charg\u00e9(s), {failed} \u00e9chec(s), {skipped} d\u00e9j\u00e0 sur disque."
+    )
+  } else {
+    cli::cli_alert_success(
+      "{downloaded} t\u00e9l\u00e9charg\u00e9(s), {skipped} d\u00e9j\u00e0 sur disque."
     )
   }
 
-  message(sprintf(
-    "Terminé : %d téléchargé(s), %d déjà sur disque.",
-    downloaded,
-    skipped
-  ))
+  # ── Ensure observations table exists ────────────────────────────────────────
+  if (!DBI::dbExistsTable(con, "observations")) {
+    DBI::dbExecute(
+      con,
+      sprintf("CREATE TABLE observations (%s)", .ECCC_CREATE_COLS)
+    )
+  }
+
+  # ── Ingest directly from CSV into DuckDB ────────────────────────────────────
+  cli::cli_progress_bar(
+    "Ingestion",
+    total = nrow(to_process),
+    format = "{cli::pb_bar} {cli::pb_current}/{cli::pb_total} | {cli::pb_eta_str} | {cli::pb_status}"
+  )
+  for (i in seq_len(nrow(to_process))) {
+    fname <- to_process$name[i]
+    dest <- normalizePath(dests[i], winslash = "/", mustWork = FALSE)
+
+    cli::cli_progress_update(status = fname)
+
+    if (!file.exists(dest)) {
+      next
+    } # download failed
+
+    ok <- tryCatch(
+      {
+        DBI::dbExecute(
+          con,
+          sprintf(
+            "INSERT INTO observations
+              SELECT * FROM read_csv('%s',
+                header    = false,
+                skip      = 1,
+                columns   = {%s},
+                dateformat = '%%Y-%%m-%%d',
+                encoding  = 'latin-1'
+         )",
+            dest,
+            .ECCC_READ_CSV_COLS
+          )
+        )
+        TRUE
+      },
+      error = function(e) {
+        warning(sprintf(
+          "Échec de l'ingestion : %s\n%s",
+          fname,
+          conditionMessage(e)
+        ))
+        FALSE
+      }
+    )
+
+    if (ok) {
+      DBI::dbExecute(
+        con,
+        "UPDATE csv_list SET ingested_at = CURRENT_TIMESTAMP WHERE name = ?",
+        params = list(fname)
+      )
+      file.remove(dests[i])
+    }
+  }
+  cli::cli_progress_done()
+
   invisible(NULL)
 }
 
@@ -250,70 +284,81 @@ update_data <- function(
   updated_count <- 0L
 
   if (file.exists(db_path)) {
-    con <- DBI::dbConnect(duckdb::duckdb(), db_path)
+    con <- tryCatch(
+      DBI::dbConnect(duckdb::duckdb(), db_path),
+      error = function(e) {
+        warning(sprintf(
+          "Impossible d'ouvrir la base de données, tous les fichiers seront traités : %s",
+          conditionMessage(e)
+        ))
+        NULL
+      }
+    )
 
-    if (DBI::dbExistsTable(con, "csv_list")) {
-      db_list <- tbl(con, "csv_list") |>
-        select(name, last_modified, ingested_at) |>
-        collect()
+    if (!is.null(con)) {
+      on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
-      # New: filename not present in the database at all
-      new_count <- sum(!website_list$name %in% db_list$name)
+      if (DBI::dbExistsTable(con, "csv_list")) {
+        db_list <- tbl(con, "csv_list") |>
+          select(name, last_modified, ingested_at) |>
+          collect()
 
-      # Pending: in csv_list but ingestion was never completed (e.g. interrupted)
-      pending_count <- sum(
-        db_list$name %in% website_list$name & is.na(db_list$ingested_at)
-      )
+        # New: filename not present in the database at all
+        new_count <- sum(!website_list$name %in% db_list$name)
 
-      # Updated: already ingested but the website copy is newer
-      ingested <- db_list[!is.na(db_list$ingested_at), ]
-      common <- merge(
-        website_list[, c("name", "last_modified")],
-        ingested[, c("name", "last_modified", "ingested_at")],
-        by = "name",
-        suffixes = c("_web", "_db")
-      )
-      updated_rows <- common[common$last_modified_web > common$ingested_at, ]
-      updated_count <- nrow(updated_rows)
+        # Pending: in csv_list but ingestion was never completed (e.g. interrupted)
+        pending_count <- sum(
+          db_list$name %in% website_list$name & is.na(db_list$ingested_at)
+        )
 
-      if (updated_count > 0) {
-        for (i in seq_len(updated_count)) {
-          fname <- updated_rows$name[i]
-          climate_id <- sub(
-            "climate_daily_QC_(.+)_\\d{4}_P1D\\.csv$",
-            "\\1",
-            fname
-          )
-          year <- as.integer(sub(
-            "climate_daily_QC_.+_(\\d{4})_P1D\\.csv$",
-            "\\1",
-            fname
-          ))
+        # Updated: already ingested but the website copy is newer
+        ingested <- db_list[!is.na(db_list$ingested_at), ]
+        common <- merge(
+          website_list[, c("name", "last_modified")],
+          ingested[, c("name", "last_modified", "ingested_at")],
+          by = "name",
+          suffixes = c("_web", "_db")
+        )
+        updated_rows <- common[common$last_modified_web > common$ingested_at, ]
+        updated_count <- nrow(updated_rows)
 
-          # Remove stale observations
-          if (DBI::dbExistsTable(con, "observations")) {
+        if (updated_count > 0) {
+          for (i in seq_len(updated_count)) {
+            fname <- updated_rows$name[i]
+            climate_id <- sub(
+              "climate_daily_QC_(.+)_\\d{4}_P1D\\.csv$",
+              "\\1",
+              fname
+            )
+            year <- as.integer(sub(
+              "climate_daily_QC_.+_(\\d{4})_P1D\\.csv$",
+              "\\1",
+              fname
+            ))
+
+            # Remove stale observations
+            if (DBI::dbExistsTable(con, "observations")) {
+              DBI::dbExecute(
+                con,
+                "DELETE FROM observations WHERE climate_id = ? AND year = ?",
+                params = list(climate_id, year)
+              )
+            }
+
+            # Reset tracking: mark as not ingested, store the new last_modified
             DBI::dbExecute(
               con,
-              "DELETE FROM observations WHERE climate_id = ? AND year = ?",
-              params = list(climate_id, year)
+              "UPDATE csv_list SET ingested_at = NULL, last_modified = ? WHERE name = ?",
+              params = list(updated_rows$last_modified_web[i], fname)
             )
+
+            # Remove cached file so download_qc_data re-fetches it
+            dest <- file.path(data_dir, fname)
+            if (file.exists(dest)) file.remove(dest)
           }
-
-          # Reset tracking: mark as not ingested, store the new last_modified
-          DBI::dbExecute(
-            con,
-            "UPDATE csv_list SET ingested_at = NULL, last_modified = ? WHERE name = ?",
-            params = list(updated_rows$last_modified_web[i], fname)
-          )
-
-          # Remove cached file so download_qc_data re-fetches it
-          dest <- file.path(data_dir, fname)
-          if (file.exists(dest)) file.remove(dest)
         }
       }
     }
-
-    DBI::dbDisconnect(con, shutdown = TRUE)
   }
 
   message(sprintf(

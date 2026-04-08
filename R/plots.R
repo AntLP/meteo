@@ -24,6 +24,51 @@ build_chart <- function(data, metric_col) {
     )
 }
 
+# Plotly chart of yearly mean (and optional quantile lines) across all stations.
+# data: data frame from get_yearly_stats() with columns year, mean, p<n>...
+# quantiles: numeric vector of percentile values matching the p-columns in data.
+build_yearly_chart <- function(data, metric_col, quantiles = numeric(0)) {
+  y_label <- FRENCH_COLS[[metric_col]]
+
+  p <- plot_ly(data, x = ~year) |>
+    add_trace(
+      y = ~mean,
+      type = "scatter",
+      mode = "lines+markers",
+      name = "Moyenne",
+      line = list(color = "#1565C0", width = 2),
+      marker = list(color = "#1565C0", size = 5),
+      hovertemplate = paste0("%{x}<br>Moyenne : %{y:.2f}<extra></extra>")
+    )
+
+  if (length(quantiles) > 0) {
+    # Spread colours from orange (extreme) to grey (central)
+    pal <- colorRampPalette(c("#EF6C00", "#BDBDBD"))(ceiling(length(quantiles) / 2))
+    # Mirror palette so symmetric quantiles share a colour
+    colours <- c(pal, rev(pal))[seq_along(quantiles)]
+
+    for (i in seq_along(quantiles)) {
+      q   <- quantiles[i]
+      col <- paste0("p", gsub("\\.", "_", as.character(q)))
+      p <- p |> add_trace(
+        y = data[[col]],
+        type = "scatter",
+        mode = "lines",
+        name = paste0(q, "e centile"),
+        line = list(color = colours[i], width = 1.2, dash = "dash"),
+        hovertemplate = paste0("%{x}<br>", q, "e centile : %{y:.2f}<extra></extra>")
+      )
+    }
+  }
+
+  p |> layout(
+    xaxis = list(title = "Ann\u00e9e", dtick = 1),
+    yaxis = list(title = y_label),
+    hovermode = "x unified",
+    legend = list(orientation = "h", y = -0.15)
+  )
+}
+
 # DT datatable showing DISPLAY_COLS with French headers.
 # A JS initComplete callback sends the clicked column index to Shiny
 # via input$selected_col (1-based, 1 = first metric column after Date).
