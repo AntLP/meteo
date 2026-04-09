@@ -87,6 +87,13 @@ ui <- navbarPage(
             choices = setNames(METRIC_COLS, FRENCH_COLS[METRIC_COLS]),
             selected = "mean_temp"
           ),
+          checkboxGroupInput(
+            inputId = "yearly_months",
+            label = "Mois :",
+            choices = setNames(1:12, month.abb),
+            selected = 1:12,
+            inline = TRUE
+          ),
           selectizeInput(
             inputId = "yearly_quantiles",
             label = "Quantiles (%) :",
@@ -133,7 +140,11 @@ ui <- navbarPage(
               inputId = "raster_date",
               label = "Date :",
               value = Sys.Date() - 1
-            )
+            ) |>
+              tagAppendAttributes(
+                `data-date-orientation` = "bottom",
+                .cssSelector = "input"
+              )
           ),
           conditionalPanel(
             condition = "input.raster_date_mode == 'range'",
@@ -142,7 +153,11 @@ ui <- navbarPage(
               label = "Intervalle :",
               start = Sys.Date() - 30,
               end = Sys.Date() - 1
-            )
+            ) |>
+              tagAppendAttributes(
+                `data-date-orientation` = "bottom",
+                .cssSelector = "input"
+              )
           ),
           sliderInput(
             inputId = "raster_bandwidth",
@@ -260,12 +275,10 @@ server <- function(input, output, session) {
 
   # ── Yearly trends ─────────────────────────────────────────────────────────
   yearly_data <- reactive({
-    req(data_available)
+    req(data_available, length(input$yearly_months) > 0)
     quantiles <- sort(as.numeric(input$yearly_quantiles))
-    quantiles <- quantiles[
-      !is.na(quantiles) & quantiles >= 0 & quantiles <= 100
-    ]
-    get_yearly_stats(con, input$yearly_metric, quantiles)
+    quantiles <- quantiles[!is.na(quantiles) & quantiles >= 0 & quantiles <= 100]
+    get_yearly_stats(con, input$yearly_metric, quantiles, as.integer(input$yearly_months))
   })
 
   output$yearly_chart <- renderPlotly({

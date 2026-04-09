@@ -80,7 +80,7 @@ build_station_registry <- function(con) {
 # quantiles: numeric vector of percentile values in [0, 100], e.g. c(10, 25, 75, 90).
 # Returns a data frame with columns: year, mean, and one column per quantile named p<value>.
 # Returns NULL if the table doesn't exist or has no data.
-get_yearly_stats <- function(con, metric, quantiles = numeric(0)) {
+get_yearly_stats <- function(con, metric, quantiles = numeric(0), months = 1:12) {
   if (!DBI::dbExistsTable(con, "observations")) return(NULL)
 
   q_cols <- if (length(quantiles) > 0) {
@@ -97,13 +97,19 @@ get_yearly_stats <- function(con, metric, quantiles = numeric(0)) {
     ""
   }
 
+  month_filter <- if (length(months) < 12) {
+    sprintf("AND month IN (%s)", paste(as.integer(months), collapse = ", "))
+  } else {
+    ""
+  }
+
   sql <- sprintf(
     "SELECT year, AVG(\"%s\") AS mean%s
      FROM observations
-     WHERE \"%s\" IS NOT NULL
+     WHERE \"%s\" IS NOT NULL %s
      GROUP BY year
      ORDER BY year",
-    metric, q_cols, metric
+    metric, q_cols, metric, month_filter
   )
 
   result <- DBI::dbGetQuery(con, sql)
