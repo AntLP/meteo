@@ -81,11 +81,20 @@ ui <- navbarPage(
     "Données de la station",
     fluidPage(
       br(),
-      selectInput(
+      virtualSelectInput(
         inputId = "station_select",
-        label = "Sélectionner une station :",
+        label = "Sélectionner une station:",
         choices = if (data_available) station_choices else character(0),
-        width = "400px"
+        showValueAsTags = TRUE,
+        search = TRUE,
+        multiple = FALSE
+      ),
+      radioButtons(
+        inputId = "station_period",
+        label = "Résolution :",
+        choices = c("Jour" = "day", "Semaine" = "week", "Mois" = "month", "Année" = "year"),
+        selected = "day",
+        inline = TRUE
       ),
       plotlyOutput("chart", height = "400px"),
       br(),
@@ -119,13 +128,6 @@ ui <- navbarPage(
             search = FALSE,
             multiple = TRUE
           ),
-          # checkboxGroupInput(
-          #   inputId = "yearly_months",
-          #   label = "Mois :",
-          #   choices = setNames(1:12, month.abb),
-          #   selected = 1:12,
-          #   inline = TRUE
-          # ),
           selectizeInput(
             inputId = "yearly_quantiles",
             label = "Quantiles (%) :",
@@ -291,16 +293,23 @@ server <- function(input, output, session) {
     load_station_data(con, selected_climate_id())
   })
 
+  # ── Summarised station data ───────────────────────────────────────────────
+  summarised_data <- reactive({
+    d <- station_data()
+    req(d)
+    summarise_station_data(d, input$station_period)
+  })
+
   # ── Chart ─────────────────────────────────────────────────────────────────
   output$chart <- renderPlotly({
-    d <- station_data()
+    d <- summarised_data()
     req(d)
     build_chart(d, selected_metric())
   })
 
   # ── Table ─────────────────────────────────────────────────────────────────
   output$table <- renderDT({
-    d <- station_data()
+    d <- summarised_data()
     req(d)
     build_table(d)
   })

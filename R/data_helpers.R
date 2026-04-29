@@ -116,6 +116,35 @@ get_yearly_stats <- function(con, metric, quantiles = numeric(0), months = 1:12)
   if (nrow(result) == 0) NULL else result
 }
 
+# Aggregate daily station data to week / month / year.
+# period: one of "day", "week", "month", "year".
+# gust_speed is aggregated with max(); all other metric columns with mean().
+summarise_station_data <- function(data, period) {
+  if (period == "day") return(data)
+
+  safe_mean <- function(x) { v <- mean(x, na.rm = TRUE); if (is.nan(v))      NA_real_ else v }
+  safe_max  <- function(x) { v <- max(x,  na.rm = TRUE); if (is.infinite(v)) NA_real_ else v }
+
+  period_date <- switch(period,
+    week  = data$date - (as.integer(format(data$date, "%u")) - 1L),  # ISO Monday
+    month = as.Date(format(data$date, "%Y-%m-01")),
+    year  = as.Date(format(data$date, "%Y-01-01"))
+  )
+
+  avg_cols <- setdiff(METRIC_COLS, "gust_speed")
+
+  data |>
+    mutate(date = period_date) |>
+    group_by(date) |>
+    summarise(
+      across(all_of(avg_cols), safe_mean),
+      gust_speed = safe_max(gust_speed),
+      .groups = "drop"
+    ) |>
+    select(all_of(DISPLAY_COLS)) |>
+    arrange(date)
+}
+
 # Query all observations for climate_id. Returns a data frame with DISPLAY_COLS
 # sorted chronologically, or NULL if the station has no data.
 load_station_data <- function(con, climate_id) {

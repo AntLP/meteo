@@ -74,6 +74,9 @@ build_yearly_chart <- function(data, metric_col, quantiles = numeric(0)) {
 # via input$selected_col (1-based, 1 = first metric column after Date).
 build_table <- function(data) {
   display_data <- data[, DISPLAY_COLS, drop = FALSE]
+  metric_cols <- setdiff(DISPLAY_COLS, "date")
+  has_data <- rowSums(!is.na(display_data[, metric_cols, drop = FALSE])) > 0
+  display_data <- display_data[has_data, , drop = FALSE]
   colnames(display_data) <- unname(FRENCH_COLS[DISPLAY_COLS])
 
   datatable(
