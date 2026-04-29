@@ -1,6 +1,7 @@
 # app.R
 
 library(shiny)
+library(shinyWidgets)
 library(leaflet)
 library(leaflet.extras)
 library(leafem)
@@ -15,6 +16,24 @@ library(duckdb)
 source("R/data_helpers.R")
 source("R/plots.R")
 source("R/raster_helpers.R")
+
+months <- setNames(
+  1:12,
+  c(
+    "Janvier",
+    "Février",
+    "Mars",
+    "Avril",
+    "Mai",
+    "Juin",
+    "Juillet",
+    "Août",
+    "Septembre",
+    "Octobre",
+    "Novembre",
+    "Décembre"
+  )
+)
 
 # ── Database connection ───────────────────────────────────────────────────────
 db_path <- "data/meteo.duckdb"
@@ -87,13 +106,26 @@ ui <- navbarPage(
             choices = setNames(METRIC_COLS, FRENCH_COLS[METRIC_COLS]),
             selected = "mean_temp"
           ),
-          checkboxGroupInput(
+          virtualSelectInput(
             inputId = "yearly_months",
-            label = "Mois :",
-            choices = setNames(1:12, month.abb),
-            selected = 1:12,
-            inline = TRUE
+            label = "Mois",
+            choices = list(
+              "Printemps" = months[3:5],
+              "Été" = months[6:8],
+              "Automne" = months[9:11],
+              "Hiver" = months[c(12, 1, 2)]
+            ),
+            showValueAsTags = TRUE,
+            search = FALSE,
+            multiple = TRUE
           ),
+          # checkboxGroupInput(
+          #   inputId = "yearly_months",
+          #   label = "Mois :",
+          #   choices = setNames(1:12, month.abb),
+          #   selected = 1:12,
+          #   inline = TRUE
+          # ),
           selectizeInput(
             inputId = "yearly_quantiles",
             label = "Quantiles (%) :",
@@ -277,8 +309,15 @@ server <- function(input, output, session) {
   yearly_data <- reactive({
     req(data_available, length(input$yearly_months) > 0)
     quantiles <- sort(as.numeric(input$yearly_quantiles))
-    quantiles <- quantiles[!is.na(quantiles) & quantiles >= 0 & quantiles <= 100]
-    get_yearly_stats(con, input$yearly_metric, quantiles, as.integer(input$yearly_months))
+    quantiles <- quantiles[
+      !is.na(quantiles) & quantiles >= 0 & quantiles <= 100
+    ]
+    get_yearly_stats(
+      con,
+      input$yearly_metric,
+      quantiles,
+      as.integer(input$yearly_months)
+    )
   })
 
   output$yearly_chart <- renderPlotly({
